@@ -4,10 +4,11 @@ import cn.hutool.core.util.StrUtil;
 
 /**
  * @author
+ * 校验正则的实现类
  */
 public class RegexUtils {
     /**
-     * 是否是无效手机格式
+     * 是否是无效手机格式  反向的校验
      * @param phone 要校验的手机号
      * @return true:符合，false：不符合
      */
