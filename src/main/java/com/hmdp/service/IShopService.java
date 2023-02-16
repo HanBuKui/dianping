@@ -14,6 +14,17 @@ import com.baomidou.mybatisplus.extension.service.IService;
  */
 public interface IShopService extends IService<Shop> {
 
-
+    /**
+    *@Description: 查询商铺信息（支持缓存）
+    *@Param: [id]
+    *@return: com.hmdp.dto.Result
+    */
     Result queryById(Long id);
+
+    /**
+    *@Description: 更新商铺信息（1.更新数据库 2.删缓存）
+    *@Param: [shop]
+    *@return: com.hmdp.dto.Result
+    */
+    Result updateShop(Shop shop);
 }

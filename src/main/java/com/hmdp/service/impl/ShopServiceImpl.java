@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import ch.qos.logback.core.pattern.color.RedCompositeConverter;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
@@ -12,6 +13,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * <p>
@@ -45,8 +49,22 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail("店铺不存在!");
         }
         // 6. 存在，写入redis
-        stringRedisTemplate.opsForValue().set(key,JSONUtil.toJsonStr(shop));
+        stringRedisTemplate.opsForValue().set(key,JSONUtil.toJsonStr(shop), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
         // 7. 返回数据
         return Result.ok(shop);
+    }
+
+    @Override
+    @Transactional
+    public Result updateShop(Shop shop) {
+        Long id = shop.getId();
+        if(id == null){
+            return Result.fail("店铺id不能为空！");
+        }
+        //1. 更新数据库
+        updateById(shop);
+        //2.删除缓存
+        stringRedisTemplate.delete(RedisConstants.CACHE_SHOP_KEY+id);
+        return Result.ok();
     }
 }
