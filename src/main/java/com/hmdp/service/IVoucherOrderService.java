@@ -20,4 +20,6 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
     *@return: com.hmdp.dto.Result
     */
     Result seckKillVoucher(Long voucherId);
+
+    Result createVoucherOrder(Long voucherId);
 }
