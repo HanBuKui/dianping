@@ -94,7 +94,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
             It follows that for any two strings s and t, s.intern() == t.intern() is true if and only if s.equals(t) is true.
 
-         锁的范围变小（统一用户用一把锁），系统性能提升
+         锁的范围变小（同一用户用一把锁），系统性能提升
 
          Q3: 为什么不能在这个方法里用synchronized
          A： 因为锁在括号结束后就释放了，而事务要在整个函数执行完才提交（此时事务的级别是 可重复读），所以在 放锁 提交事务 之间如果该用户再次进行一人一单查询，会因为事务未提交而显示未有订单 => 并发问题
