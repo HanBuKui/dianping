@@ -8,9 +8,11 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +28,9 @@ import java.time.LocalDateTime;
  */
 @Service
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     private ISeckillVoucherService seckillVoucherService;
@@ -52,31 +57,53 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if (voucher.getStock()<1) {
             return Result.fail("库存不足!");
         }
+
         Long userID = UserHolder.getUser().getId();
-        synchronized(userID.toString().intern()) {
-            /*
-            Q4: 为什么不能直接return createVoucherOrder(voucherId)？会出现什么问题
-            A: 因为这个createVoucherOrder使用了@Transactional通过AOP实现事务的控制，
-               而直接 return createVoucherOrder(voucherId) 本质其实是 return this.createVoucherOrder(voucherId)
-               是直接调用的方法，而不是Spring管理的对象
-               Spring AOP是通过动态代理对象实现的，而直接那样相当于直接调用原本方法，！！没有实现事务的操作！！
+        //**************************************** 单机模式下的锁机制 ********************************************************************
+//        synchronized(userID.toString().intern()) {
+//            /*
+//            Q4: 为什么不能直接return createVoucherOrder(voucherId)？会出现什么问题
+//            A: 因为这个createVoucherOrder使用了@Transactional通过AOP实现事务的控制，
+//               而直接 return createVoucherOrder(voucherId) 本质其实是 return this.createVoucherOrder(voucherId)
+//               是直接调用的方法，而不是Spring管理的对象
+//               Spring AOP是通过动态代理对象实现的，而直接那样相当于直接调用原本方法，！！没有实现事务的操作！！
+//
+//               所以要通过 AopContext.currentProxy(); 方法获取当前对象的代理对象，然后调用代理方法，才能实现事务控制
+//
+//               除此之外，还要有额外两步骤：
+//                 1.  maven中导入  aspectjweaver 包
+//                 <!--        代理的模式-->
+//                <dependency>
+//                    <groupId>org.aspectj</groupId>
+//                    <artifactId>aspectjweaver</artifactId>
+//                </dependency>
+//
+//                2. 在启动类中加入注解 @EnableAspectJAutoProxy(exposeProxy = true)   //代理对象可以暴露（默认为false）
+//             */
+//            // 获取代理对象(事务)
+//            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
+//            return proxy.createVoucherOrder(voucherId);
+//        }
+        //************************************************************************************************************
 
-               所以要通过 AopContext.currentProxy(); 方法获取当前对象的代理对象，然后调用代理方法，才能实现事务控制
+        //**************************************** 集群模式下使用分布式锁 ********************************************************************
 
-               除此之外，还要有额外两步骤：
-                 1.  maven中导入  aspectjweaver 包
-                 <!--        代理的模式-->
-                <dependency>
-                    <groupId>org.aspectj</groupId>
-                    <artifactId>aspectjweaver</artifactId>
-                </dependency>
-
-                2. 在启动类中加入注解 @EnableAspectJAutoProxy(exposeProxy = true)   //代理对象可以暴露（默认为false）
-             */
-            // 获取代理对象(事务)
+        //创建锁对象
+        SimpleRedisLock lock = new SimpleRedisLock("order:" + userID, stringRedisTemplate);
+        boolean isLock = lock.tryLock(1200);
+        //判断锁是否获取成功
+        if(!isLock){
+            // 获取锁失败,返回错误或重试
+            return Result.fail("不允许重复下单");
+        }
+        try {
             IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId);
+        } finally {
+            lock.unlock();
         }
+
+        //************************************************************************************************************
     }
 
     @Transactional
