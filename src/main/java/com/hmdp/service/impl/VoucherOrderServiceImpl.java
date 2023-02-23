@@ -10,6 +10,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -38,6 +40,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Autowired
     private RedisIdWorker redisIdWorker;
 
+    @Autowired
+    private RedissonClient redissonClient;
+
     @Override
     public Result seckKillVoucher(Long voucherId) {
         // 1. 查寻优惠券
@@ -60,6 +65,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         Long userID = UserHolder.getUser().getId();
         //**************************************** 单机模式下的锁机制 ********************************************************************
+
 //        synchronized(userID.toString().intern()) {
 //            /*
 //            Q4: 为什么不能直接return createVoucherOrder(voucherId)？会出现什么问题
@@ -84,13 +90,20 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
 //            return proxy.createVoucherOrder(voucherId);
 //        }
+
         //************************************************************************************************************
 
         //**************************************** 集群模式下使用分布式锁 ********************************************************************
 
         //创建锁对象
-        SimpleRedisLock lock = new SimpleRedisLock("order:" + userID, stringRedisTemplate);
-        boolean isLock = lock.tryLock(1200);
+
+        //自己实现的分布式锁
+//        SimpleRedisLock lock = new SimpleRedisLock("order:" + userID, stringRedisTemplate);
+//        boolean isLock = lock.tryLock(1200);
+
+        //已有框架redisson提供的锁实现
+        RLock lock = redissonClient.getLock("lock:order:" + userID);   //可重入锁
+        boolean isLock = lock.tryLock();
         //判断锁是否获取成功
         if(!isLock){
             // 获取锁失败,返回错误或重试
