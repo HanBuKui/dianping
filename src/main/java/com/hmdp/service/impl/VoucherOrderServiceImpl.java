@@ -14,11 +14,15 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  * <p>
@@ -43,81 +47,116 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Autowired
     private RedissonClient redissonClient;
 
+    //秒杀lua脚本
+    private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
+    static {
+        SECKILL_SCRIPT = new DefaultRedisScript<>();
+        SECKILL_SCRIPT.setLocation(new ClassPathResource("./lua/seckill.lua"));
+        SECKILL_SCRIPT.setResultType(Long.class);
+    }
+    //基于redis完成秒杀资格判断（秒杀优化）
     @Override
     public Result seckKillVoucher(Long voucherId) {
-        // 1. 查寻优惠券
-        SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
-        if(voucher == null){
-            return Result.fail("优惠券信息错误!");
-        }
-        // 2. 判断秒杀是否开始
-        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
-            return Result.fail("秒杀尚未开始!");
-        }
-        // 3. 判断秒杀是否结束
-        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
-            return Result.fail("秒杀已经结束!");
-        }
-        // 4. 判断库存是否充足
-        if (voucher.getStock()<1) {
-            return Result.fail("库存不足!");
-        }
 
-        Long userID = UserHolder.getUser().getId();
-        //**************************************** 单机模式下的锁机制 ********************************************************************
+        Long userId = UserHolder.getUser().getId();
 
-//        synchronized(userID.toString().intern()) {
-//            /*
-//            Q4: 为什么不能直接return createVoucherOrder(voucherId)？会出现什么问题
-//            A: 因为这个createVoucherOrder使用了@Transactional通过AOP实现事务的控制，
-//               而直接 return createVoucherOrder(voucherId) 本质其实是 return this.createVoucherOrder(voucherId)
-//               是直接调用的方法，而不是Spring管理的对象
-//               Spring AOP是通过动态代理对象实现的，而直接那样相当于直接调用原本方法，！！没有实现事务的操作！！
+        // 1.执行lua脚本
+        Long result = stringRedisTemplate.execute(
+                SECKILL_SCRIPT,
+                Collections.EMPTY_LIST,
+                voucherId.toString(),
+                userId
+        );
+        int resultValue = result.intValue();
+        // 2.判断结果是否为0  0为有购买资格
+        if(resultValue != 0){
+            return Result.fail(resultValue==1?"库存不足":"不能重复下单");
+        }
+        // 3. 有购买资格，把下单信息保存到阻塞队列
+        long orderId = redisIdWorker.nexId("order");
+        // TODO 保存到阻塞队列
+
+        // 4. 返回订单ID
+        return Result.ok(orderId);
+    }
+
+
+
+//    @Override
+//    public Result seckKillVoucher(Long voucherId) {
+//        // 1. 查寻优惠券
+//        SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
+//        if(voucher == null){
+//            return Result.fail("优惠券信息错误!");
+//        }
+//        // 2. 判断秒杀是否开始
+//        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
+//            return Result.fail("秒杀尚未开始!");
+//        }
+//        // 3. 判断秒杀是否结束
+//        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
+//            return Result.fail("秒杀已经结束!");
+//        }
+//        // 4. 判断库存是否充足
+//        if (voucher.getStock()<1) {
+//            return Result.fail("库存不足!");
+//        }
 //
-//               所以要通过 AopContext.currentProxy(); 方法获取当前对象的代理对象，然后调用代理方法，才能实现事务控制
+//        Long userID = UserHolder.getUser().getId();
+//        //**************************************** 单机模式下的锁机制 ********************************************************************
 //
-//               除此之外，还要有额外两步骤：
-//                 1.  maven中导入  aspectjweaver 包
-//                 <!--        代理的模式-->
-//                <dependency>
-//                    <groupId>org.aspectj</groupId>
-//                    <artifactId>aspectjweaver</artifactId>
-//                </dependency>
+////        synchronized(userID.toString().intern()) {
+////            /*
+////            Q4: 为什么不能直接return createVoucherOrder(voucherId)？会出现什么问题
+////            A: 因为这个createVoucherOrder使用了@Transactional通过AOP实现事务的控制，
+////               而直接 return createVoucherOrder(voucherId) 本质其实是 return this.createVoucherOrder(voucherId)
+////               是直接调用的方法，而不是Spring管理的对象
+////               Spring AOP是通过动态代理对象实现的，而直接那样相当于直接调用原本方法，！！没有实现事务的操作！！
+////
+////               所以要通过 AopContext.currentProxy(); 方法获取当前对象的代理对象，然后调用代理方法，才能实现事务控制
+////
+////               除此之外，还要有额外两步骤：
+////                 1.  maven中导入  aspectjweaver 包
+////                 <!--        代理的模式-->
+////                <dependency>
+////                    <groupId>org.aspectj</groupId>
+////                    <artifactId>aspectjweaver</artifactId>
+////                </dependency>
+////
+////                2. 在启动类中加入注解 @EnableAspectJAutoProxy(exposeProxy = true)   //代理对象可以暴露（默认为false）
+////             */
+////            // 获取代理对象(事务)
+////            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
+////            return proxy.createVoucherOrder(voucherId);
+////        }
 //
-//                2. 在启动类中加入注解 @EnableAspectJAutoProxy(exposeProxy = true)   //代理对象可以暴露（默认为false）
-//             */
-//            // 获取代理对象(事务)
+//        //************************************************************************************************************
+//
+//        //**************************************** 集群模式下使用分布式锁 ********************************************************************
+//
+//        //创建锁对象
+//
+//        //自己实现的分布式锁
+////        SimpleRedisLock lock = new SimpleRedisLock("order:" + userID, stringRedisTemplate);
+////        boolean isLock = lock.tryLock(1200);
+//
+//        //已有框架redisson提供的锁实现
+//        RLock lock = redissonClient.getLock("lock:order:" + userID);   //可重入锁
+//        boolean isLock = lock.tryLock();
+//        //判断锁是否获取成功
+//        if(!isLock){
+//            // 获取锁失败,返回错误或重试
+//            return Result.fail("不允许重复下单");
+//        }
+//        try {
 //            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
 //            return proxy.createVoucherOrder(voucherId);
+//        } finally {
+//            lock.unlock();
 //        }
-
-        //************************************************************************************************************
-
-        //**************************************** 集群模式下使用分布式锁 ********************************************************************
-
-        //创建锁对象
-
-        //自己实现的分布式锁
-//        SimpleRedisLock lock = new SimpleRedisLock("order:" + userID, stringRedisTemplate);
-//        boolean isLock = lock.tryLock(1200);
-
-        //已有框架redisson提供的锁实现
-        RLock lock = redissonClient.getLock("lock:order:" + userID);   //可重入锁
-        boolean isLock = lock.tryLock();
-        //判断锁是否获取成功
-        if(!isLock){
-            // 获取锁失败,返回错误或重试
-            return Result.fail("不允许重复下单");
-        }
-        try {
-            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
-            return proxy.createVoucherOrder(voucherId);
-        } finally {
-            lock.unlock();
-        }
-
-        //************************************************************************************************************
-    }
+//
+//        //************************************************************************************************************
+//    }
 
     @Transactional
     public Result createVoucherOrder(Long voucherId){   //synchronized（悲观锁）在方法上锁的对象是this  ->  所有用户加的是同一把锁  ->  应该以当前用户id加锁，这样不同用户在一人一单查询时各自查各自的
