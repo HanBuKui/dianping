@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
@@ -20,9 +21,11 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.concurrent.*;
 
 /**
  * <p>
@@ -32,6 +35,8 @@ import java.util.Collections;
  * @author
  * @since 2021-12-22
  */
+
+@Slf4j
 @Service
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
 
@@ -47,6 +52,45 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Autowired
     private RedissonClient redissonClient;
 
+    private BlockingDeque<VoucherOrder> orderTasks = (BlockingDeque<VoucherOrder>) new ArrayBlockingQueue<VoucherOrder>(1024 * 1024);  //阻塞队列
+    private static ExecutorService SECKILL_ORDER_EXECUTOR = Executors.newSingleThreadExecutor();
+
+    @PostConstruct
+    private void init(){
+        SECKILL_ORDER_EXECUTOR.submit(new VoucherOrderHandle());
+    }
+
+
+    private class VoucherOrderHandle implements Runnable{
+        @Override
+        public void run() {
+            while(true){
+                try {
+                    // 1. 获取队列中的订单信息
+                    VoucherOrder voucherOrder = orderTasks.take();
+                    // 2. 创建订单
+                    handleVouncherOrder(voucherOrder);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    log.error("处理订单异常",e);
+                }
+
+            }
+        }
+    }
+
+    private void handleVouncherOrder(VoucherOrder voucherOrder) throws InterruptedException {
+        // 1. 获取用户（因为是从线程池中新开的线程，不是主线程，从UserHolder取不到用户信息，所以只能从voucherOrder中取）
+        Long userId = voucherOrder.getUserId();
+        // 2. 创建锁对象 (其实不加锁也可以，因为redis做了并发的避免，但此处加只是做个兜底（虽然这种可能性几乎没有）)
+        RLock lock = redissonClient.getLock("lock:order:" + userId);
+        boolean isLock = lock.tryLock();
+        if(!isLock){
+            log.error("不允许重复下单");
+            return;
+        }
+    }
+
     //秒杀lua脚本
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
     static {
@@ -57,9 +101,22 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     //基于redis完成秒杀资格判断（秒杀优化）
     @Override
     public Result seckKillVoucher(Long voucherId) {
+        // 1. 查寻优惠券
+        SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
+        if(voucher == null){
+            return Result.fail("优惠券信息错误!");
+        }
+        // 2. 判断秒杀是否开始
+        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
+            return Result.fail("秒杀尚未开始!");
+        }
+        // 3. 判断秒杀是否结束
+        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
+            return Result.fail("秒杀已经结束!");
+        }
+
 
         Long userId = UserHolder.getUser().getId();
-
         // 1.执行lua脚本
         Long result = stringRedisTemplate.execute(
                 SECKILL_SCRIPT,
@@ -74,6 +131,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
         // 3. 有购买资格，把下单信息保存到阻塞队列
         long orderId = redisIdWorker.nexId("order");
+        VoucherOrder voucherOrder = new VoucherOrder();
+        voucherOrder.setId(orderId);  // 订单id
+        voucherOrder.setUserId(userId);  //用户id
+        voucherOrder.setVoucherId(voucherId);  //优惠券id
         // TODO 保存到阻塞队列
 
         // 4. 返回订单ID
