@@ -60,10 +60,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //    private BlockingDeque<VoucherOrder> orderTasks = (BlockingDeque<VoucherOrder>) new ArrayBlockingQueue<VoucherOrder>(1024 * 1024);  //阻塞队列
     private static ExecutorService SECKILL_ORDER_EXECUTOR = Executors.newSingleThreadExecutor();
 
+    // 只有redis版本>5时才支持redis流  redis-server --version  Redis server v=3.0.504(所以暂时将此方法注释掉，避免springboot启动报错)
+    /*
     @PostConstruct
     private void init(){
         SECKILL_ORDER_EXECUTOR.submit(()->{
-
             while(true){
                 try{
                     // 1.从消息队列中拿消息  XREADGROUP GROUP g1 c1  COUNT 1 BLOCK 2000 STREAMS streams.order >   //g1组的c1消费者
@@ -94,6 +95,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         });
     }
+    */
 
     // 阻塞队列方案的线程执行方法
 //    private class VoucherOrderHandle implements Runnable{
