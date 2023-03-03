@@ -74,5 +74,14 @@ public class BlogController {
         return Result.ok(page.getRecords());
     }
 
+    /**
+    *@Description: 滚动分页查询收件箱
+    *@Param: [max] 上一次请求的最小时间戳(本次的最大时间)  [offset] 偏移量(上一次查询 score 为最小时间戳的个数)
+    *@return: com.hmdp.dto.Result  List<Blog>:小于指定时间戳的笔记集合 mintime：本次查询的推送的最小时间戳 offset：偏移量
+    */
+    @GetMapping("/of/follow")
+    public Result queryBlogOfFollow(@RequestParam(value = "lastId") Long max,@RequestParam(value = "offset",defaultValue = "0") Integer offset){
+        return blogService.queryBlogOfFollow(max,offset);
+    }
 
 }
