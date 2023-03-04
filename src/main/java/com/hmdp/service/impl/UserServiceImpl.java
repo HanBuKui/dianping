@@ -15,9 +15,12 @@ import jdk.nashorn.internal.runtime.regexp.joni.Regex;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.stereotype.Service;
 
 import javax.servlet.http.HttpSession;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -103,5 +106,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 2. 保存用户
         save(user);
         return user;
+    }
+
+    @Override
+    public Result sign() {
+        Long userId = UserHolder.getUser().getId();
+        // 获取日期
+        LocalDateTime now = LocalDateTime.now();
+        String format = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        // BitMap底层是基于String数据结构，因此其操作也都封装在字符串相关操作中
+        String key = RedisConstants.USER_SIGN_KEY + userId +format;
+        int dayOfMonth = now.getDayOfMonth()-1;
+        stringRedisTemplate.opsForValue().setBit(key,dayOfMonth,true);
+        return Result.ok();
     }
 }

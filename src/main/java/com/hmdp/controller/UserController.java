@@ -102,4 +102,16 @@ public class UserController {
         UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
         return Result.ok(userDTO);
     }
+
+    /**
+    *@Description: 用户签到
+    *@Param: []
+    *@return: com.hmdp.dto.Result
+    */
+    @PostMapping("/sign")
+    public Result sign(){
+        return userService.sign();
+    }
+
+
 }
